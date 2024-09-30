@@ -1,0 +1,332 @@
+// Example KQL query to identify unused App Service Plans
+AppServicePlans
+| where TotalRequests == 0 and TimeGenerated > ago(30d)
+| project AppServicePlanName, ResourceGroupName, SubscriptionId
+
+// Example KQL query for Azure Workbook to track resource utilization
+Perf
+| where TimeGenerated > ago(30d)
+| summarize avg(CounterValue) by bin(TimeGenerated, 1d), CounterName
+| render timechart
+
+# PowerShell script to scale down idle App Services
+$appServices = Get-AzWebApp | Where-Object { $_.State -eq 'Running' -and $_.LastRequest -lt (Get-Date).AddDays(-30) }
+foreach ($app in $appServices) {
+    Stop-AzWebApp -ResourceGroupName $app.ResourceGroup -Name $app.Name
+    Set-AzWebApp -ResourceGroupName $app.ResourceGroup -Name $app.Name -AppServicePlan "FreeTierPlan"
+}
+
+# PowerShell script to tag resources
+$resources = Get-AzResource
+foreach ($resource in $resources) {
+    New-AzTag -ResourceId $resource.Id -Tag @{"Owner" = "Finance"; "Environment" = "Production"}
+}
+
+# PowerShell script to consolidate multiple apps onto a single App Service Plan
+$sourceAppServicePlans = @("AppServicePlan1", "AppServicePlan2")
+$destinationAppServicePlan = "ConsolidatedAppServicePlan"
+$resourceGroupName = "ResourceGroup"
+
+foreach ($sourcePlan in $sourceAppServicePlans) {
+    $apps = Get-AzWebApp -ResourceGroupName $resourceGroupName | Where-Object { $_.AppServicePlanId -eq $sourcePlan }
+    foreach ($app in $apps) {
+        Set-AzWebApp -ResourceGroupName $resourceGroupName -Name $app.Name -AppServicePlan $destinationAppServicePlan
+    }
+}
+
+AppServicePlans
+| where TotalRequests == 0 and TimeGenerated > ago(30d)
+| project AppServicePlanName, ResourceGroupName, SubscriptionId
+
+$appServices = Get-AzWebApp | Where-Object { $_.State -eq 'Running' -and $_.LastRequest -lt (Get-Date).AddDays(-30) }
+foreach ($app in $appServices) {
+    Stop-AzWebApp -ResourceGroupName $app.ResourceGroup -Name $app.Name
+    Set-AzWebApp -ResourceGroupName $app.ResourceGroup -Name $app.Name -AppServicePlan "FreeTierPlan"
+}
+
+# PowerShell script to consolidate multiple apps onto a single App Service Plan
+$sourceAppServicePlans = @("AppServicePlan1", "AppServicePlan2")
+$destinationAppServicePlan = "ConsolidatedAppServicePlan"
+$resourceGroupName = "ResourceGroup"
+
+foreach ($sourcePlan in $sourceAppServicePlans) {
+    $apps = Get-AzWebApp -ResourceGroupName $resourceGroupName | Where-Object { $_.AppServicePlanId -eq $sourcePlan }
+    foreach ($app in $apps) {
+        Set-AzWebApp -ResourceGroupName $resourceGroupName -Name $app.Name -AppServicePlan $destinationAppServicePlan
+    }
+}
+
+
+resources
+| where type == "microsoft.web/hostingenvironments"
+| project aseJoinId = toupper(id)
+| join kind=leftouter (
+    resources 
+    | where type == "microsoft.web/serverfarms" 
+    | extend aseJoinId = toupper(properties.hostingEnvironmentId)
+    | summarize ase_used_instances = sum(toint(sku.capacity)) by aseJoinId
+) on $left.aseJoinId == $right.aseJoinId
+| join kind=fullouter (
+    resources
+    | where type == "microsoft.web/serverfarms"
+    | project id, tier = sku.tier, size = sku.size, instances = toint(sku.capacity), aseJoinId = toupper(properties.hostingEnvironmentId), aspJoinId = toupper(id)
+    | project aseJoinId, aspJoinId, instances, tier, size
+) on $left.aseJoinId == $right.aseJoinId
+| join kind=leftouter (
+            resources         
+            | where type == "microsoft.web/sites" or type == "microsoft.web/sites/slots"
+            | extend aspJoinId = toupper(properties.serverFarmId), isRunning = iif(properties.state == "Running", 1, 0)
+            | summarize appCount=count(), runningCount=sum(isRunning), app_ids = make_set(id) by aspJoinId
+) on $left.aspJoinId == $right.aspJoinId
+| extend 
+    maxAppRecommendation =
+        case(
+            size == 'F1', 9999,
+
+            size == 'B1', 8,
+            size == 'S1', 8,
+            size == 'P1v2', 8,
+            size == 'I1', 8,
+
+            size == 'B2', 16,
+            size == 'S2', 16,
+            size == 'P1v3', 16,
+            size == 'P2v2', 16,
+            size == 'I2', 16,
+            size == 'I1v2', 16,
+
+            size == 'B3', 32,
+            size == 'S3', 32,
+            size == 'P3v2', 32,
+            size == 'P2v3', 32,
+            size == 'I3', 32,
+            size == 'I2v2', 32,
+
+            size == 'P3v3', 64,
+            size == 'I3v2', 64,
+
+            size == 'I4v2', 128,
+            size == 'I5v2', 256,
+            size == 'I6v2', 512,
+            0
+        )
+| extend 
+    allowedHybridConnections = case(
+            substring(size, 0, 1)  == 'B', 5,
+            substring(size, 0, 1)  == 'S', 25,
+            substring(size, 0, 1)  == 'P', 220,
+            substring(size, 0, 1)  == 'I', 220,
+            0
+   )
+| extend 
+    remainingAppSlots = maxAppRecommendation - appCount,
+    used_recommended_apps = min_of(maxAppRecommendation, appCount)
+| extend
+    remaining_recommended_apps = max_of(0, remainingAppSlots),
+    over_recommended_apps =  -min_of(remainingAppSlots, 0)
+| project 
+    aseId = aseJoinId, 
+    aspId = aspJoinId, 
+    tier, 
+    size, 
+    instances,
+    appCount, 
+    runningCount,
+    remaining_possible_instances = min_of(100 - instances, (200 - ase_used_instances)),
+    used_recommended_apps,
+    remaining_recommended_apps,
+    over_recommended_apps,
+    app_ids = app_ids,
+    app_ids_json_string = tostring(app_ids),
+    apps_label = 
+        strcat(
+            case(remaining_recommended_apps > 0, strcat(tostring(used_recommended_apps), " (", tostring(remaining_recommended_apps), " remaining)"), ""),
+            case(over_recommended_apps > 0, strcat(tostring(appCount), " (", tostring(over_recommended_apps), " over)"), "") 
+        ),
+    allowedHybridConnections
+  
+| order by appCount, instances desc
+
+// Example KQL query to generate cost reports by department
+Usage
+| where TimeGenerated > startofmonth(now())
+| summarize Cost = sum(PreTaxCost) by Department, bin(TimeGenerated, 1d)
+| project Department, Cost, TimeGenerated
+
+# PowerShell script to tag resources by department
+$resources = Get-AzResource
+foreach ($resource in $resources) {
+    New-AzTag -ResourceId $resource.Id -Tag @{"Department" = $resource.Department; "Owner" = $resource.Owner}
+}
+
+# PowerShell script to calculate monthly costs and generate chargeback reports
+$departments = Get-AzTag -TagName "Department"
+foreach ($department in $departments) {
+    $costs = Get-AzConsumptionUsageDetail -StartDate (Get-Date).AddMonths(-1).ToString("yyyy-MM-01") -EndDate (Get-Date).ToString("yyyy-MM-01") -ResourceGroupName $department.ResourceGroup
+    $totalCost = ($costs | Measure-Object -Property PreTaxCost -Sum).Sum
+    # Generate chargeback report
+    New-Object PSObject -Property @{
+        Department = $department.Name
+        Cost = $totalCost
+        Month = (Get-Date).AddMonths(-1).ToString("yyyy-MM")
+    }
+}
+
+# PowerShell script to identify and decommission idle resources
+$idleResources = Get-AzResource | Where-Object { $_.LastUsed -lt (Get-Date).AddMonths(-1) }
+foreach ($resource in $idleResources) {
+    Remove-AzResource -ResourceId $resource.Id -Force
+}
+
+
+//Tag Usage Overview
+ResourceContainers
+| where type =~ 'microsoft.resources/subscriptions/resourcegroups'
+| extend TagBool = iff(tags != '' and tags != '[]', "Tagged","Untagged")
+| summarize count() by TagBool
+//| project resourceGroup, tags
+//Tagged Resource Groups
+Resources 
+| extend TagBool = iff(tags != '' and tags != '[]', "Tagged","Untagged") 
+| summarize count() by TagBool
+//Total Count of Untagged Resources
+resources 
+| mvexpand tags
+| where tags == '' or isempty(tags)
+| project Name=id, subscriptionId
+| summarize count()
+//Unique Resource Tag Keys
+resources 
+| mvexpand tags
+| where tags != '' or isnotempty(tags)
+| extend tagKey = tostring(bag_keys(tags)[0])
+| extend tagValue = tostring(tags[tagKey])
+| project tagKey, tagValue
+| distinct tagKey
+| summarize count()
+//Unique Resource Tags
+resources 
+| mvexpand tags
+| where tags != '' or isnotempty(tags)
+| extend tagKey = tostring(bag_keys(tags)[0])
+| extend tagValue = tostring(tags[tagKey])
+| project tagKey, tagValue
+| distinct tagKey, tagValue
+//Untagged Resources
+resources 
+| mvexpand tags
+| where tags == '' or isempty(tags)
+| extend tagKey = tostring(bag_keys(tags)[0])
+| extend tagValue = tostring(tags[tagKey])
+| project name, type, resourceGroup
+//Untagged Resource Groups
+ResourceContainers
+| where type =~ 'Microsoft.Resources/subscriptions' 
+| extend SubscriptionName=name 
+| join  ( ResourceContainers | where type =~ 'microsoft.resources/subscriptions/resourcegroups' | mvexpand tags | where tags == '' or isempty(tags) 
+| extend resourceGroupName=id, RGLocation=location) on subscriptionId
+| project resourceGroupName, RGLocation, SubscriptionName
+| summarize count()
+//Unique Resource Group Tags Keys
+ResourceContainers
+| where type == "microsoft.resources/subscriptions/resourcegroups"
+| mvexpand tags
+| where tags != '' or isnotempty(tags)
+| extend tagKey = tostring(bag_keys(tags)[0])
+| extend tagValue = tostring(tags[tagKey])
+| project tagKey, tagValue
+| distinct tagKey
+| summarize count()
+//Unique Resource Group Tags
+ResourceContainers
+| where type == "microsoft.resources/subscriptions/resourcegroups"
+| mvexpand tags
+| where tags != '' or isnotempty(tags)
+| extend tagKey = tostring(bag_keys(tags)[0])
+| extend tagValue = tostring(tags[tagKey])
+| project tagKey, tagValue
+| distinct tagKey, tagValue
+//Untagged Resource Groups List
+ResourceContainers
+| where type == "microsoft.resources/subscriptions/resourcegroups"
+| mvexpand tags
+| where tags == '' or isempty(tags)
+| extend tagKey = tostring(bag_keys(tags)[0])
+| extend tagValue = tostring(tags[tagKey])
+| project name, subscriptionId
+
+# Example of setting an Azure Policy for resource tagging compliance
+$definition = New-AzPolicyDefinition -Name "TaggingPolicy" -DisplayName "Ensure resources are tagged with department and owner" -Policy '{
+    "if": {
+        "not": {
+            "field": "tags.Department",
+            "exists": true
+        }
+    },
+    "then": {
+        "effect": "modify",
+        "details": {
+            "roleDefinitionIds": [
+                "/providers/Microsoft.Authorization/roleDefinitions/...",
+                "/providers/Microsoft.Authorization/roleDefinitions/..."
+            ],
+            "operations": [
+                {
+                    "operation": "add",
+                    "field": "tags.Department",
+                    "value": "[parameters('Department')]"
+                }
+            ]
+        }
+    }
+}'
+
+// Example KQL query to combine cost and performance metrics
+union ( 
+    Usage
+    | summarize Cost = sum(PreTaxCost) by ResourceGroup, bin(TimeGenerated, 1d)
+    | project TimeGenerated, ResourceGroup, Cost
+), (
+    Perf
+    | summarize AvgCPU = avg(CounterValue) by ResourceGroup, bin(TimeGenerated, 1d)
+    | project TimeGenerated, ResourceGroup, AvgCPU
+)
+| join kind=inner (Usage | summarize sum(PreTaxCost) by bin(TimeGenerated, 1d)) on TimeGenerated
+| project TimeGenerated, ResourceGroup, Cost, AvgCPU
+
+# PowerShell script to automate rightsizing of resources
+$vms = Get-AzVM
+foreach ($vm in $vms) {
+    $metrics = Get-AzMetric -ResourceId $vm.Id -MetricName "Percentage CPU" -TimeGrain "PT1H" -StartTime (Get-Date).AddDays(-7) -EndTime (Get-Date)
+    $averageCPU = ($metrics.Data | Measure-Object -Property Average -Average).Average
+    if ($averageCPU -lt 20) {
+        Resize-AzVM -ResourceGroupName $vm.ResourceGroupName -VMName $vm.Name -Size "Standard_DS1_v2"
+    }
+}
+
+
+# Example of setting up a governance policy for resource tagging
+$definition = New-AzPolicyDefinition -Name "TaggingPolicy" -DisplayName "Ensure resources are tagged with environment and cost center" -Policy '{
+    "if": {
+        "not": {
+            "field": "tags.Environment",
+            "exists": true
+        }
+    },
+    "then": {
+        "effect": "modify",
+        "details": {
+            "roleDefinitionIds": [
+                "/providers/Microsoft.Authorization/roleDefinitions/...",
+                "/providers/Microsoft.Authorization/roleDefinitions/..."
+            ],
+            "operations": [
+                {
+                    "operation": "add",
+                    "field": "tags.Environment",
+                    "value": "[parameters('Environment')]"
+                }
+            ]
+        }
+    }
+}'

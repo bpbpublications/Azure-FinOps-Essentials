@@ -1,0 +1,102 @@
+{
+    "mode": "All", // The enforcement mode for the policy rule.
+    "policyRule": {
+      "if": {
+        "allOf": [
+          {
+            "equals": "Microsoft.Sql/servers/databases",
+            "field": "type" // The resource type field.
+          },
+          {
+            "field": "name",
+            "notEquals": "master" // Ensuring the database name is not 'master'.
+          },
+          {
+            "anyOf": [
+              {
+                "equals": "GeneralPurpose",
+                "field": "Microsoft.Sql/servers/databases/sku.tier" // Check for GeneralPurpose SKU tier.
+              },
+              {
+                "equals": "Hyperscale",
+                "field": "Microsoft.Sql/servers/databases/sku.tier" // Check for Hyperscale SKU tier.
+              },
+              {
+                "equals": "BusinessCritical",
+                "field": "Microsoft.Sql/servers/databases/sku.tier" // Check for BusinessCritical SKU tier.
+              },
+              {
+                "contains": "GP_",
+                "field": "Microsoft.Sql/servers/databases/sku.name" // Check for SKUs starting with GP_.
+              },
+              {
+                "contains": "BC_",
+                "field": "Microsoft.Sql/servers/databases/sku.name" // Check for SKUs starting with BC_.
+              },
+              {
+                "contains": "HS_",
+                "field": "Microsoft.Sql/servers/databases/sku.name" // Check for SKUs starting with HS_.
+              }
+            ]
+          },
+          {
+            "field": "Microsoft.Sql/servers/databases/licenseType",
+            "notEquals": "BasePrice" // The field indicating license type is not BasePrice.
+          },
+          {
+            "not": {
+              "anyOf": [
+                {
+                  "equals": "ElasticPool",
+                  "field": "Microsoft.Sql/servers/databases/sku.name" // Ensure it's not an ElasticPool.
+                },
+                {
+                  "contains": "GP_S_",
+                  "field": "Microsoft.Sql/servers/databases/sku.name" // Ensure SKU name does not contain GP_S_.
+                },
+                {
+                  "contains": "pool",
+                  "field": "kind" // Ensure the kind does not contain 'pool'.
+                },
+                {
+                  "contains": "serverless",
+                  "field": "kind" // Ensure the kind is not 'serverless'.
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "then": {
+        "details": {
+          "conflictEffect": "deny", // The effect to apply if there's a conflict.
+          "operations": [
+            {
+              "field": "Microsoft.Sql/servers/databases/licenseType",
+              "operation": "addOrReplace",
+              "value": "BasePrice" // The operation to adjust the license type to BasePrice.
+            }
+          ],
+          "roleDefinitionIds": [
+            "/providers/microsoft.authorization/roleDefinitions/6d8ee4ec-f05a-4a1d-8b00-a9b17e38b437" // The role definition ID.
+          ]
+        },
+        "effect": "[parameters('effect')]" // The effect based on parameters.
+      }
+    },
+    "parameters": {
+      "effect": {
+        "type": "String", // The data type of the parameter.
+        "metadata": {
+          "displayName": "Effect", // The display name of the parameter.
+          "description": "Enable or disable the execution of the policy" // Description of the parameter.
+        },
+        "allowedValues": [
+          "Modify",
+          "Disabled"
+        ],
+        "defaultValue": "Modify" // The default value of the parameter.
+      }
+    }
+  }
+  

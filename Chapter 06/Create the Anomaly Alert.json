@@ -1,0 +1,3 @@
+Method: PUT
+URI:
+https://management.azure.com/{resourceUri}/providers/Microsoft.Insights/scheduledQueryRules/{ruleName}?api-version=2018-04-16

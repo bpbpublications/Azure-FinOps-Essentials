@@ -1,0 +1,32 @@
+Method: POST
+URI:
+https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.CostManagement/query?api-version=2019-11-01
+Body:
+{
+  "type": "Usage",
+  "timeframe": "Last30Days",
+  "dataset": {
+    "granularity": "None",
+    "aggregation": {
+      "totalCost": {
+        "name": "PreTaxCost",
+        "function": "Sum"
+      }
+    },
+    "sorting": [
+      {
+        "direction": "descending",
+        "name": "PreTaxCost"
+      }
+    ],
+    "grouping": [
+      {
+        "type": "Dimension",
+        "name": "ResourceGroup"
+      }
+    ]
+  },
+  "datasetConfiguration": {
+    "top": 10
+  }
+}

@@ -1,0 +1,259 @@
+"policyRule": {
+    "if": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "field": "type",
+              "equals": "Microsoft.Compute/virtualMachines"
+            },
+            {
+              "field": "location",
+              "equals": "centralindia"
+            },
+            {
+              "not": {
+                "anyOf": [
+                  {
+                    "field": "name",
+                    "match": "mum-prd-net-###"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "then": {
+      "effect": "deny"
+    }
+  }
+
+  //Storage policy for LRS
+
+  "policyRule": {
+    "if": {
+      "allOf": [
+        {
+          "field": "type",
+          "equals": "Microsoft.Storage/storageAccounts"
+        },
+        {
+          "field": "Microsoft.Storage/storageAccounts/sku.name",
+          "notEquals": "Standard_LRS"
+        }
+      ]
+    },
+    "then": {
+      "effect": "deny"
+    }
+  }
+
+//Auditing Orphan Resources
+  {
+    "policyRule": {
+      "if": {
+        "anyOf": [
+          {
+            "allOf": [
+              {
+                "field": "type",
+                "equals": "Microsoft.Compute/disks"
+              },
+              {
+                "not": {
+                  "anyOf": [
+                    {
+                      "field": "Microsoft.Compute/disks/diskState",
+                      "equals": "Attached"
+                    },
+                    {
+                      "field": "Microsoft.Compute/disks/diskState",
+                      "equals": "Reserved"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "field": "type",
+                "equals": "Microsoft.Web/serverfarms"
+              },
+              {
+                "not": {
+                  "field": "Microsoft.Web/serverfarms/sku.tier",
+                  "equals": "Free"
+                }
+              },
+              {
+                "count": {
+                  "field": "Microsoft.Web/sites/serverFarmId",
+                  "where": {
+                    "field": "Microsoft.Web/sites/serverFarmId",
+                    "equals": "[field('Microsoft.Web/serverfarms/id')]"
+                  }
+                },
+                "equals": 0
+              }
+            ]
+          }
+        ]
+      },
+      "then": {
+        "effect": "audit"
+      }
+    }
+  }
+  //Azure Hybrid Benefit (AHUB)
+  {
+    "policyRule": {
+      "if": {
+        "allOf": [
+          {
+            "field": "type",
+            "equals": "Microsoft.Compute/virtualMachines"
+          },
+          {
+            "anyOf": [
+              {
+                "field": "Microsoft.Compute/virtualMachines/storageProfile.imageReference.sku",
+                "equals": "2016-Datacenter"
+              },
+              {
+                "field": "Microsoft.Compute/virtualMachines/storageProfile.imageReference.sku",
+                "equals": "2019-Datacenter"
+              }
+            ]
+          },
+          {
+            "not": {
+              "field": "Microsoft.Compute/virtualMachines/licenseType",
+              "equals": "Windows_Server"
+            }
+          }
+        ]
+      },
+      "then": {
+        "effect": "audit"
+      }
+    }
+  }
+//Combined Policy for Windows Server and SQL Server
+  {
+    "properties": {
+      "displayName": "Enable Azure Hybrid Benefit for Windows Server and SQL Server",
+      "policyType": "Custom",
+      "mode": "All",
+      "description": "This policy enables Azure Hybrid Benefit for Windows Server by setting the licenseType to Windows_Server for eligible virtual machines and to AHUB for SQL Servers.",
+      "metadata": {
+        "version": "1.0.0",
+        "category": "Cost Management"
+      },
+      "parameters": {
+        "windowsImageSku": {
+          "type": "Array",
+          "metadata": {
+            "description": "The list of Image SKUs for Windows Server for which the Azure Hybrid Benefit should be enabled.",
+            "displayName": "Windows Image SKUs"
+          },
+          "allowedValues": [
+            "2016-Datacenter",
+            "2019-Datacenter"
+          ],
+          "defaultValue": [
+            "2016-Datacenter",
+            "2019-Datacenter"
+          ]
+        },
+        "sqlImageSku": {
+          "type": "Array",
+          "metadata": {
+            "description": "The list of Image SKUs for SQL Server for which the Azure Hybrid Benefit should be enabled.",
+            "displayName": "SQL Image SKUs"
+          },
+          "allowedValues": [
+            "SQL2016-WS2016",
+            "SQL2017-WS2016",
+            "SQL2019-WS2019"
+          ],
+          "defaultValue": [
+            "SQL2016-WS2016",
+            "SQL2017-WS2016",
+            "SQL2019-WS2019"
+          ]
+        }
+      },
+      "policyRule": {
+        "if": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Compute/virtualMachines"
+                },
+                {
+                  "anyOf": [
+                    {
+                      "field": "Microsoft.Compute/virtualMachines/storageProfile.imageReference.sku",
+                      "in": "[parameters('windowsImageSku')]"
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "field": "Microsoft.Compute/virtualMachines/licenseType",
+                    "equals": "Windows_Server"
+                  }
+                }
+              ]
+            },
+            {
+              "allOf": [
+                {
+                  "field": "type",
+                  "equals": "Microsoft.Sql/servers"
+                },
+                {
+                  "field": "Microsoft.Sql/servers/sku.name",
+                  "in": "[parameters('sqlImageSku')]"
+                },
+                {
+                  "not": {
+                    "field": "Microsoft.Sql/servers/licenseType",
+                    "equals": "AHUB"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "then": {
+          "effect": "modify",
+          "details": {
+            "roleDefinitionIds": [
+              "/providers/microsoft.authorization/roleDefinitions/f1a07417-d97a-45cb-824c-7a7467783830"
+            ],
+            "operations": [
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Compute/virtualMachines/licenseType",
+                "value": "Windows_Server"
+              },
+              {
+                "operation": "addOrReplace",
+                "field": "Microsoft.Sql/servers/licenseType",
+                "value": "AHUB"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+  
+  

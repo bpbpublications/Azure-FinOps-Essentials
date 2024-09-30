@@ -1,0 +1,2 @@
+Method: GET
+URI: https://management.azure.com/providers/Microsoft.Billing/billingAccounts/{billingAccountName}/billingSubscriptions?api-version=2019-10-01-preview

@@ -1,0 +1,3 @@
+Method: GET
+URI:
+https://management.azure.com/{scope}/providers/Microsoft.Capacity/reservationOrders?api-version=2019-04-01

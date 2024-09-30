@@ -1,0 +1,24 @@
+Method: POST
+URI:
+https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.CostManagement/query?api-version=2019-11-01
+Body:
+{
+    "type": "ActualCost",
+    "timeframe": "Last30Days",
+    "dataset": {
+      "granularity": "None",
+      "aggregation": {
+        "totalCost": {
+          "name": "PreTaxCost",
+          "function": "Sum"
+        }
+      },
+      "grouping": [
+        {
+          "type": "Dimension",
+          "name": "ResourceGroup"
+        }
+      ]
+    }
+  }
+  

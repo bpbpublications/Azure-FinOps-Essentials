@@ -1,0 +1,40 @@
+Method: POST
+URI:
+https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.CostManagement/query?api-version=2019-11-01
+Body:
+{
+    "type": "ActualCost",
+    "timeframe": "Last30Days",
+    "dataset": {
+      "granularity": "Daily",
+      "aggregation": {
+        "totalCost": {
+          "name": "PreTaxCost",
+          "function": "Sum"
+        }
+      },
+      "filter": {
+        "And": [
+          {
+            "Dimension": {
+              "name": "ResourceType",
+              "operator": "In",
+              "values": [
+                "Microsoft.ServiceName/serviceType" // Replace with the actual service name/type
+              ]
+            }
+          },
+          {
+            "Dimension": {
+              "name": "Date",
+              "operator": "InLast",
+              "values": [
+                "P30D" // P30D represents the last 30 days
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+  
